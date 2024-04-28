@@ -1,14 +1,16 @@
 use iced::{
-    widget::{button, canvas, column, text, text_input, Column},
-    Application, Command,
+    widget::{column, scrollable, text, text_input},
+    Application,
 };
 
 pub fn main() -> iced::Result {
     let window_settings = iced::window::Settings {
+        // TODO: make size of window based on display configuration / config
         size: iced::Size {
             width: 800.0,
-            height: 100.0,
+            height: 150.0,
         },
+        // TODO: move position to config
         position: iced::window::Position::Centered,
         resizable: false,
         decorations: false,
@@ -22,16 +24,24 @@ pub fn main() -> iced::Result {
     })
 }
 
+#[derive(Debug, Clone)]
+struct AppEntry {
+    name: String,
+}
+
 struct Runner {
-    fstate: String,
-    entries: Vec<String>,
+    input_text_state: String,
+    entries: Vec<AppEntry>,
+    active_entry: usize,
+    entries_limit: usize,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
     TextChanged(String),
-    Up,
-    Down,
+    ListUp,
+    ListDown,
+    Acc,
 }
 
 impl Application for Runner {
@@ -43,39 +53,87 @@ impl Application for Runner {
     fn new(_flags: Self::Flags) -> (Self, iced::Command<Self::Message>) {
         (
             Runner {
-                fstate: String::from(""),
+                input_text_state: String::from(""),
                 entries: vec![],
+                active_entry: 0,
+                // TODO: move limit to config
+                entries_limit: 5,
             },
             iced::Command::none(),
         )
     }
     fn view(&self) -> iced::Element<Self::Message> {
-        column![
-            text_input("", &self.fstate)
-                .on_input(Message::TextChanged)
-                .on_submit(Message::Up),
-            text(match self.entries.len() {
-                0 => "a",
-                i => &self.entries[i - 1],
-            })
-        ]
-        .into()
+        let text_input = text_input("", &self.input_text_state)
+            .on_input(Message::TextChanged)
+            .on_submit(Message::Acc);
+        let children_entries = self.entries.clone().into_iter().map(|x| {
+            iced::Element::from(
+                text(x.name)
+                    .height(iced::Length::Fixed(24.0))
+                    .width(iced::Length::Fill),
+            )
+        });
+        column![text_input, scrollable(column(children_entries))].into()
     }
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::TextChanged(str) => {
-                self.fstate = str;
+                self.input_text_state = str;
                 iced::Command::none()
             }
-            Message::Up => {
-                self.entries.push(self.fstate.clone());
-                self.fstate = "".to_string();
+            Message::Acc => {
+                self.entries.push(AppEntry {
+                    name: "- ".to_string() + &self.input_text_state.clone(),
+                });
+                self.input_text_state = "".to_string();
                 iced::Command::none()
             }
-            Message::Down => iced::Command::none(),
+            Message::ListUp => {
+                self.entries[self.active_entry]
+                    .name
+                    .replace_range(0..2, "- ");
+                if self.active_entry > 0 {
+                    self.active_entry -= 1;
+                    self.entries[self.active_entry]
+                        .name
+                        .replace_range(0..2, "> ");
+                }
+                iced::Command::none()
+            }
+            Message::ListDown => {
+                self.entries[self.active_entry]
+                    .name
+                    .replace_range(0..2, "- ");
+                if self.active_entry < self.entries.len() - 1 {
+                    self.active_entry += 1;
+                    self.entries[self.active_entry]
+                        .name
+                        .replace_range(0..2, "> ");
+                } else {
+                    self.active_entry = 0;
+                }
+                iced::Command::none()
+            }
         }
     }
     fn title(&self) -> String {
         String::from("yarrun")
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        use iced::keyboard;
+        use iced::keyboard::key;
+
+        keyboard::on_key_press(|key, modifiers| {
+            let keyboard::Key::Named(key) = key else {
+                return None;
+            };
+
+            match (key, modifiers) {
+                (key::Named::ArrowUp, _) => Some(Message::ListUp),
+                (key::Named::ArrowDown, _) => Some(Message::ListDown),
+                _ => None,
+            }
+        })
     }
 }
