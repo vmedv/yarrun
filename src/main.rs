@@ -40,8 +40,29 @@ struct AppEntry {
 struct Runner {
     input_text_state: String,
     entries: Vec<AppEntry>,
-    active_entry: usize,
+    active_entry: Option<usize>,
     entries_limit: usize,
+}
+
+impl Runner {
+    fn entries_shift<P, M>(&mut self, predicate: P, active_mutate: M)
+    where
+        P: Fn(usize) -> bool,
+        M: Fn(usize) -> usize,
+    {
+        if let Some(active_ref) = &mut self.active_entry {
+            if predicate(*active_ref) {
+                self.entries[*active_ref].name.replace_range(0..2, "- ");
+                // *active_ref -= 1;
+                *active_ref = active_mutate(*active_ref);
+                self.entries[*active_ref].name.replace_range(0..2, "> ");
+            }
+        } else if !self.entries.is_empty() {
+            let active_ref = self.entries.len() - 1;
+            self.entries[active_ref].name.replace_range(0..2, "> ");
+            self.active_entry = Some(active_ref);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -63,7 +84,7 @@ impl Application for Runner {
             Runner {
                 input_text_state: String::from(""),
                 entries: vec![],
-                active_entry: 0,
+                active_entry: None,
                 // TODO: move limit to config
                 entries_limit: 5,
             },
@@ -86,14 +107,13 @@ impl Application for Runner {
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::TextChanged(str) => {
-                self.input_text_state = str.clone();
+                self.input_text_state.clone_from(&str);
                 // TODO: add validation to paths, take them from env var or from specification
                 let paths = [
                     std::path::Path::new("/usr/share/applications/"),
                     std::path::Path::new("/usr/local/share/applications/"),
                 ];
                 let desktop = paths
-                    .clone()
                     .into_iter()
                     .map(|d| std::fs::read_dir(d).unwrap())
                     .flat_map(|d| d.into_iter())
@@ -111,7 +131,7 @@ impl Application for Runner {
                         false
                     })
                     .map(|entry| {
-                        let desktop = parse_entry(entry.clone()).expect(entry.to_str().unwrap());
+                        let desktop = parse_entry(entry.clone()).unwrap();
                         let name = desktop
                             .section("Desktop Entry")
                             .attr("Name")
@@ -128,49 +148,41 @@ impl Application for Runner {
                 let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
                 let matches = Pattern::parse(&str, CaseMatching::Ignore, Normalization::Smart)
                     .match_list(desktop, &mut matcher);
-                let matches = matches
+                let mut matches = matches
                     .into_iter()
-                    .map(|(str, _)| AppEntry { name: str })
+                    .map(|(str, _)| AppEntry {
+                        name: "- ".to_string() + &str,
+                    })
                     .collect::<Vec<_>>();
-                self.entries =
-                    matches[0..std::cmp::min(self.entries_limit, matches.len())].to_vec();
-                iced::Command::none()
-            }
-            Message::Acc => {
-                self.entries.push(AppEntry {
-                    name: "- ".to_string() + &self.input_text_state.clone(),
-                });
-                self.input_text_state = "".to_string();
-                iced::Command::none()
-            }
-            Message::ListUp => {
-                self.entries[self.active_entry]
-                    .name
-                    .replace_range(0..2, "- ");
-                if self.active_entry > 0 {
-                    self.active_entry -= 1;
-                    self.entries[self.active_entry]
-                        .name
-                        .replace_range(0..2, "> ");
+                if matches.is_empty() {
+                    self.active_entry = None;
+                } else if self.active_entry.is_none() {
+                    self.active_entry = Some(0);
                 }
+                if let Some(active_ref) = &mut self.active_entry {
+                    let active_ref = std::cmp::min(*active_ref, matches.len());
+                    matches[active_ref].name.replace_range(0..2, "> ");
+                    self.entries =
+                        matches[0..std::cmp::min(self.entries_limit, matches.len())].to_vec();
+                    self.active_entry = Some(active_ref);
+                } else {
+                    unreachable!()
+                }
+                iced::Command::none()
+            }
+            Message::Acc => iced::Command::none(),
+            Message::ListUp => {
+                self.entries_shift(|x| x > 0, |x| x - 1);
                 iced::Command::none()
             }
             Message::ListDown => {
-                self.entries[self.active_entry]
-                    .name
-                    .replace_range(0..2, "- ");
-                if self.active_entry < self.entries.len() - 1 {
-                    self.active_entry += 1;
-                    self.entries[self.active_entry]
-                        .name
-                        .replace_range(0..2, "> ");
-                } else {
-                    self.active_entry = 0;
-                }
+                let max_shiftable = self.entries.len() - 1;
+                self.entries_shift(|x| x < max_shiftable, |x| x + 1);
                 iced::Command::none()
             }
         }
     }
+
     fn title(&self) -> String {
         String::from("yarrun")
     }
