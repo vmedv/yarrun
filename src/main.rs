@@ -3,6 +3,14 @@ use iced::{
     Application,
 };
 
+use nucleo_matcher::{
+    pattern::CaseMatching, pattern::Normalization, pattern::Pattern, Config, Matcher,
+};
+
+use freedesktop_entry_parser::parse_entry;
+
+use rayon::prelude::*;
+
 pub fn main() -> iced::Result {
     let window_settings = iced::window::Settings {
         // TODO: make size of window based on display configuration / config
@@ -78,7 +86,54 @@ impl Application for Runner {
     fn update(&mut self, message: Self::Message) -> iced::Command<Self::Message> {
         match message {
             Message::TextChanged(str) => {
-                self.input_text_state = str;
+                self.input_text_state = str.clone();
+                // TODO: add validation to paths, take them from env var or from specification
+                let paths = [
+                    std::path::Path::new("/usr/share/applications/"),
+                    std::path::Path::new("/usr/local/share/applications/"),
+                ];
+                let desktop = paths
+                    .clone()
+                    .into_iter()
+                    .map(|d| std::fs::read_dir(d).unwrap())
+                    .flat_map(|d| d.into_iter())
+                    .collect::<Vec<_>>()
+                    .into_par_iter()
+                    .map(|d| d.unwrap().path())
+                    .filter(|entry| {
+                        if let Some(ext) = entry.extension() {
+                            return ext == "desktop"
+                                && parse_entry(entry)
+                                    .unwrap()
+                                    .section("Desktop Entry")
+                                    .has_attr("Exec");
+                        }
+                        false
+                    })
+                    .map(|entry| {
+                        let desktop = parse_entry(entry.clone()).expect(entry.to_str().unwrap());
+                        let name = desktop
+                            .section("Desktop Entry")
+                            .attr("Name")
+                            .expect("Required Attr doesn't exist");
+                        let exec = desktop
+                            .section("Desktop Entry")
+                            .attr("Exec")
+                            .expect(name)
+                            .to_string();
+                        (name.to_string(), exec.to_string());
+                        name.to_string()
+                    })
+                    .collect::<Vec<_>>();
+                let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
+                let matches = Pattern::parse(&str, CaseMatching::Ignore, Normalization::Smart)
+                    .match_list(desktop, &mut matcher);
+                let matches = matches
+                    .into_iter()
+                    .map(|(str, _)| AppEntry { name: str })
+                    .collect::<Vec<_>>();
+                self.entries =
+                    matches[0..std::cmp::min(self.entries_limit, matches.len())].to_vec();
                 iced::Command::none()
             }
             Message::Acc => {
