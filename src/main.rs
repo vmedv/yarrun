@@ -156,6 +156,8 @@ impl Application for Runner {
                     .collect::<Vec<_>>();
                 if matches.is_empty() {
                     self.active_entry = None;
+                    self.entries = vec![];
+                    return iced::Command::none();
                 } else if self.active_entry.is_none() {
                     self.active_entry = Some(0);
                 }
