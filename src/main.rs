@@ -35,6 +35,7 @@ pub fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 struct AppEntry {
     name: String,
+    exec: String,
 }
 
 struct Runner {
@@ -71,6 +72,12 @@ pub enum Message {
     ListUp,
     ListDown,
     Acc,
+}
+
+impl AsRef<str> for AppEntry {
+    fn as_ref(&self) -> &str {
+        &self.name
+    }
 }
 
 impl Application for Runner {
@@ -141,8 +148,11 @@ impl Application for Runner {
                             .attr("Exec")
                             .expect(name)
                             .to_string();
-                        (name.to_string(), exec.to_string());
-                        name.to_string()
+                        AppEntry {
+                            name: name.to_string(),
+                            exec: exec.to_string(),
+                        }
+                        // name.to_string()
                     })
                     .collect::<Vec<_>>();
                 let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
@@ -150,8 +160,9 @@ impl Application for Runner {
                     .match_list(desktop, &mut matcher);
                 let mut matches = matches
                     .into_iter()
-                    .map(|(str, _)| AppEntry {
-                        name: "- ".to_string() + &str,
+                    .map(|(mut entry, _)| {
+                        entry.name = "- ".to_string() + &entry.name;
+                        entry
                     })
                     .collect::<Vec<_>>();
                 if matches.is_empty() {
@@ -162,7 +173,7 @@ impl Application for Runner {
                     self.active_entry = Some(0);
                 }
                 if let Some(active_ref) = &mut self.active_entry {
-                    let active_ref = std::cmp::min(*active_ref, matches.len());
+                    let active_ref = std::cmp::min(*active_ref, matches.len() - 1);
                     matches[active_ref].name.replace_range(0..2, "> ");
                     self.entries =
                         matches[0..std::cmp::min(self.entries_limit, matches.len())].to_vec();
@@ -172,7 +183,15 @@ impl Application for Runner {
                 }
                 iced::Command::none()
             }
-            Message::Acc => iced::Command::none(),
+            Message::Acc => {
+                use std::process::Command;
+                if let Some(ind) = self.active_entry {
+                    Command::new(&self.entries[ind].exec)
+                        .spawn()
+                        .expect(&self.entries[ind].exec);
+                }
+                iced::window::close(iced::window::Id::MAIN)
+            }
             Message::ListUp => {
                 self.entries_shift(|x| x > 0, |x| x - 1);
                 iced::Command::none()
